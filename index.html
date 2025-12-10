@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Lumetric Scanner</title>
+  <title>Lumetric Scanner Pro</title>
   
   <style>
     /* =========================================
@@ -11,7 +11,7 @@
        ========================================= */
     :root {
       --bg-color: #000000;
-      --glass-bg: rgba(20, 20, 20, 0.85); /* 更深一点，增加对比 */
+      --glass-bg: rgba(20, 20, 20, 0.85);
       --glass-border: rgba(255, 255, 255, 0.15);
       --accent: #0A84FF;
       --text-main: #FFFFFF;
@@ -26,7 +26,7 @@
       color: var(--text-main);
     }
 
-    /* 修复核心：只让主3D画布全屏，不影响波形图 */
+    /* 3D 主画布 */
     #mainCanvas {
       display: block; width: 100vw; height: 100vh; touch-action: none;
       position: absolute; top: 0; left: 0; z-index: 1;
@@ -37,10 +37,10 @@
       position: absolute; top: env(safe-area-inset-top, 15px); 
       left: 15px; right: 15px;
       display: flex; justify-content: space-between; align-items: flex-start;
-      z-index: 10; pointer-events: none;
+      z-index: 10; pointer-events: none; /* 让点击穿透 */
     }
 
-    /* 左侧状态胶囊 */
+    /* 左侧状态 */
     .status-badge {
       font-size: 12px; font-weight: 600;
       background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
@@ -48,29 +48,40 @@
       display: flex; align-items: center; gap: 8px;
       border: 1px solid var(--glass-border);
       height: 32px;
+      pointer-events: auto;
     }
     .dot { width: 6px; height: 6px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
     .dot.inactive { background: #FF453A; box-shadow: none; }
 
-    /* 右侧 Lumetric 波形图容器 */
-    .lumetric-container {
-      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+    /* 右侧区域容器 */
+    .right-ui-group {
+      display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+      pointer-events: auto;
     }
-    
-    /* 波形图 Canvas 样式 - 强制固定大小，防止被拉伸 */
-    #waveformCanvas {
-      width: 120px !important; 
-      height: 60px !important;
+
+    /* 独立的相机开启按钮 */
+    .cam-fab {
+      width: 44px; height: 44px;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      display: flex; justify-content: center; align-items: center;
+      font-size: 20px; cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      transition: transform 0.2s, background 0.2s;
+    }
+    .cam-fab:active { transform: scale(0.9); background: rgba(255,255,255,0.3); }
+
+    /* 波形图容器 */
+    .lumetric-box {
       background: rgba(0, 0, 0, 0.7);
       border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 6px;
+      border-radius: 8px;
       backdrop-filter: blur(4px);
+      padding: 2px;
     }
-    
-    .lumetric-label {
-      font-size: 10px; color: rgba(255,255,255,0.5); font-family: monospace;
-      text-transform: uppercase; letter-spacing: 1px;
-    }
+    #waveformCanvas { width: 100px !important; height: 50px !important; display: block; }
 
     /* 底部控制面板 */
     .control-sheet {
@@ -83,29 +94,32 @@
       z-index: 20;
       transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
       max-height: 70vh; overflow-y: auto;
+      transform: translateY(0);
     }
 
-    .control-sheet.collapsed { transform: translateY(calc(100% - 50px)); }
+    /* 收起状态 */
+    .control-sheet.collapsed { transform: translateY(calc(100% - 40px)); }
 
+    /* 拖动/点击手柄 */
     .sheet-handle-area {
-      width: 100%; height: 25px; position: absolute; top: 0; left: 0;
+      width: 100%; height: 30px; position: absolute; top: 0; left: 0;
       display: flex; justify-content: center; align-items: center;
       cursor: pointer; z-index: 30;
+      /* 增加触摸区域 */
     }
     .sheet-handle {
-      width: 36px; height: 4px; background: rgba(255,255,255,0.3); border-radius: 10px;
+      width: 40px; height: 5px; background: rgba(255,255,255,0.3); border-radius: 10px;
     }
 
     .actions-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-      margin-top: 10px; margin-bottom: 20px;
+      margin-top: 20px; margin-bottom: 20px;
     }
 
     .btn {
       background: rgba(255,255,255,0.12); border: none;
       color: var(--text-main); padding: 14px; border-radius: 10px;
-      font-size: 13px; font-weight: 500; cursor: pointer;
-      text-align: center;
+      font-size: 13px; font-weight: 500; cursor: pointer; text-align: center;
     }
     .btn:active { background: rgba(255,255,255,0.25); }
     .btn.primary { background: var(--text-main); color: #000; font-weight: 600; }
@@ -122,9 +136,7 @@
     .slider-value { color: var(--text-main); font-weight: 600; font-family: monospace; }
     
     input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; background: transparent; }
-    input[type=range]::-webkit-slider-runnable-track {
-      width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px;
-    }
+    input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none; appearance: none; height: 20px; width: 20px; border-radius: 50%;
       background: #fff; margin-top: -8px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
@@ -149,21 +161,26 @@
       <span id="sourceText">System Ready</span>
     </div>
     
-    <div class="lumetric-container">
-      <div class="lumetric-label">LUMETRIC SCOPE</div>
-      <canvas id="waveformCanvas" width="240" height="120"></canvas>
+    <div class="right-ui-group">
+      <div class="cam-fab" id="camFab" title="Start/Reset Camera">📷</div>
+      
+      <div class="lumetric-box">
+        <canvas id="waveformCanvas" width="200" height="100"></canvas>
+      </div>
     </div>
   </div>
 
   <div class="control-sheet" id="controlSheet">
-    <div class="sheet-handle-area" id="sheetToggle"><div class="sheet-handle"></div></div>
+    <div class="sheet-handle-area" id="sheetToggle">
+      <div class="sheet-handle"></div>
+    </div>
 
     <div class="actions-grid">
       <button class="btn primary" id="toggleModeBtn">View Points</button>
       <button class="btn accent" id="exportBtn">Download</button>
-      <button class="btn" id="switchSourceBtn">Switch Cam</button>
+      <button class="btn" id="switchSourceBtn">Switch Mode</button>
       <div class="btn file-upload">
-        Open Image
+        Load Image
         <input type="file" id="imageInput" accept="image/*">
       </div>
     </div>
@@ -193,7 +210,7 @@
     const CONFIG = {
       baseW: 320, 
       baseH: 240,
-      bgColor: 0x050505 // 深色背景，略微提亮一点点
+      bgColor: 0x050505
     };
 
     // --- State ---
@@ -213,7 +230,6 @@
       planeH: 0
     };
 
-    // Off-screen canvas for processing
     const offCanvas = document.createElement('canvas');
     const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
     
@@ -221,6 +237,7 @@
     const els = {
       sheet: document.getElementById('controlSheet'),
       sheetToggle: document.getElementById('sheetToggle'),
+      camFab: document.getElementById('camFab'), // 新的相机按钮
       modeBtn: document.getElementById('toggleModeBtn'),
       exportBtn: document.getElementById('exportBtn'),
       switchBtn: document.getElementById('switchSourceBtn'),
@@ -247,40 +264,33 @@
     animate();
 
     function init() {
-      // Scene
       scene = new THREE.Scene();
       scene.background = new THREE.Color(CONFIG.bgColor);
 
-      // Camera
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 10000);
       camera.position.set(0, 0, 600);
 
-      // Renderer (Added ID 'mainCanvas' to fix CSS issue)
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.domElement.id = 'mainCanvas'; // 关键修复：给ID
+      renderer.domElement.id = 'mainCanvas';
       document.body.appendChild(renderer.domElement);
 
-      // Controls
       controls = new THREE.OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.enablePan = false;
       
-      // Materials
       particlesMat = new THREE.PointsMaterial({ size: state.pointSize, vertexColors: true });
       meshMat = new THREE.MeshPhongMaterial({ 
         vertexColors: true, side: THREE.DoubleSide, 
         shininess: 30, flatShading: true 
       });
 
-      // Lights
       scene.add(new THREE.AmbientLight(0xffffff, 0.5));
       const dirLight = new THREE.DirectionalLight(0xffffff, 1);
       dirLight.position.set(0, 200, 200);
       scene.add(dirLight);
 
-      // Start
       resizeGrid(CONFIG.baseW, CONFIG.baseH);
       setupVideo();
       setupImageLoader();
@@ -350,14 +360,26 @@
 
     function startCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      
+      // Stop existing tracks if any
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+
       navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: "environment", width: CONFIG.baseW, height: CONFIG.baseH }
       }).then(stream => {
         video.srcObject = stream;
         video.play();
+        state.source = 'camera'; // Force source state
+        updateUIMode();
         updateStatus(true, "Camera Live");
-      }).catch(() => {
+        // Reset grid to base resolution for camera performance
+        resizeGrid(CONFIG.baseW, CONFIG.baseH);
+      }).catch((e) => {
+        console.error(e);
+        showToast("Camera Error");
         state.source = 'image';
         updateUIMode();
       });
@@ -389,13 +411,10 @@
     // --- Render ---
     function animate() {
       requestAnimationFrame(animate);
-      
       if(updateTexture()) {
         processGeometry();
-        // Draw lumetric every 3 frames for balance
         if (renderer.info.render.frame % 3 === 0) drawLumetric();
       }
-      
       controls.update();
       renderer.render(scene, camera);
     }
@@ -447,40 +466,25 @@
       }
     }
 
-    // --- Lumetric Scope Logic ---
     function drawLumetric() {
       const ctx = els.waveform;
       const w = ctx.canvas.width;
       const h = ctx.canvas.height;
-      
-      // Clear with semi-transparent black
       ctx.fillStyle = 'rgba(0,0,0,1)'; 
       ctx.fillRect(0, 0, w, h);
       
       const imgData = offCtx.getImageData(0, 0, state.planeW, state.planeH).data;
-      
-      // Histogram / Waveform simulation
-      // X axis = Horizontal position on screen
-      // Y axis = Intensity (Luma)
-      ctx.fillStyle = '#32D74B'; // Tech Green
-      // ctx.globalCompositeOperation = 'lighter'; // Additive blending for "glow"
+      ctx.fillStyle = '#32D74B'; 
 
-      const step = Math.ceil(state.planeW / w); 
-      
-      // Draw a simplified waveform: Scan columns
       for (let x = 0; x < w; x++) {
-        // Sample the middle vertical strip relative to this x
         const srcX = Math.floor(x * (state.planeW / w));
-        
-        // Sample roughly 10 points vertically for this column
         for(let y=0; y<state.planeH; y+=20) {
             const idx = (y * state.planeW + srcX) * 4;
             if(idx < imgData.length) {
                 const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
                 const luma = (0.299*r + 0.587*g + 0.114*b) / 255;
-                
                 const py = h - (luma * h);
-                ctx.fillRect(x, py, 1, 1.5); // Draw dot
+                ctx.fillRect(x, py, 1, 1.5);
             }
         }
       }
@@ -488,12 +492,31 @@
 
     // --- UI Actions ---
     function setupUI() {
-      let isExpanded = false;
-      els.sheetToggle.addEventListener('click', () => {
-        isExpanded = !isExpanded;
-        els.sheet.classList.toggle('collapsed', !isExpanded);
+      // 1. 菜单开关逻辑
+      const toggleMenu = () => {
+        els.sheet.classList.toggle('collapsed');
+      };
+      
+      // 点击 Handle 切换菜单
+      els.sheetToggle.addEventListener('click', (e) => {
+        e.stopPropagation(); // 防止冒泡到 canvas
+        toggleMenu();
       });
 
+      // 2. 点击背景关闭菜单
+      renderer.domElement.addEventListener('click', () => {
+        if (!els.sheet.classList.contains('collapsed')) {
+          els.sheet.classList.add('collapsed');
+        }
+      });
+
+      // 3. 独立相机按钮 (FAB)
+      els.camFab.addEventListener('click', () => {
+        showToast("Starting Camera...");
+        startCamera(); // 强制重启/启动摄像头
+      });
+
+      // 其他按钮
       els.modeBtn.addEventListener('click', () => {
         state.mode = state.mode === 'mesh' ? 'points' : 'mesh';
         els.modeBtn.textContent = state.mode === 'mesh' ? 'View Points' : 'View Mesh';
@@ -511,9 +534,7 @@
             els.imgInput.click();
           }
         } else {
-          state.source = 'camera';
-          updateUIMode();
-          resizeGrid(CONFIG.baseW, CONFIG.baseH); 
+          startCamera();
         }
       });
 
@@ -548,7 +569,6 @@
     function updateUIMode() {
       const isImg = state.source === 'image';
       els.sourceText.textContent = isImg ? "Source: Image" : "Source: Camera";
-      els.switchBtn.textContent = isImg ? "To Camera" : "To Image";
       els.resContainer.style.opacity = isImg ? '1' : '0.5';
       els.resContainer.style.pointerEvents = isImg ? 'auto' : 'none';
       els.statusDot.className = 'dot'; 
