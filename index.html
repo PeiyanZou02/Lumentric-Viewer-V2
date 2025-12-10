@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Lumetric Scanner Pro (Fixed)</title>
+  <title>Lumetric Scanner Pro</title>
   
   <style>
     /* =========================================
@@ -55,18 +55,23 @@
       pointer-events: auto;
     }
 
+    /* Changed from icon to text button */
     .cam-fab {
-      width: 44px; height: 44px;
+      /* width: 44px; height: 44px; Removed fixed size */
+      padding: 8px 16px; /* Added padding for text */
       background: rgba(255, 255, 255, 0.15);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 50%;
+      border-radius: 20px; /* Changed to pill shape */
       display: flex; justify-content: center; align-items: center;
-      font-size: 20px; cursor: pointer;
+      font-size: 14px; /* Reduced font size */
+      font-weight: 600; /* Added font weight */
+      cursor: pointer;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       transition: transform 0.2s, background 0.2s;
+      color: var(--text-main); /* Ensure text color is correct */
     }
-    .cam-fab:active { transform: scale(0.9); background: rgba(255,255,255,0.3); }
+    .cam-fab:active { transform: scale(0.95); background: rgba(255,255,255,0.3); }
 
     .lumetric-box {
       background: rgba(0, 0, 0, 0.7);
@@ -151,7 +156,7 @@
     </div>
     
     <div class="right-ui-group">
-      <div class="cam-fab" id="camFab" title="Start/Reset Camera">📷</div>
+      <div class="cam-fab" id="camFab" title="Start/Reset Camera">Camera</div>
       <div class="lumetric-box">
         <canvas id="waveformCanvas" width="200" height="100"></canvas>
       </div>
