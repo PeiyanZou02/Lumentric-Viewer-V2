@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Lumetric Scanner Pro</title>
+  <title>Lumetric Scanner Pro (Fixed)</title>
   
   <style>
     /* =========================================
@@ -26,21 +26,18 @@
       color: var(--text-main);
     }
 
-    /* 3D 主画布 */
     #mainCanvas {
       display: block; width: 100vw; height: 100vh; touch-action: none;
       position: absolute; top: 0; left: 0; z-index: 1;
     }
 
-    /* 顶部 UI 容器 */
     .top-ui {
       position: absolute; top: env(safe-area-inset-top, 15px); 
       left: 15px; right: 15px;
       display: flex; justify-content: space-between; align-items: flex-start;
-      z-index: 10; pointer-events: none; /* 让点击穿透 */
+      z-index: 10; pointer-events: none;
     }
 
-    /* 左侧状态 */
     .status-badge {
       font-size: 12px; font-weight: 600;
       background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
@@ -53,13 +50,11 @@
     .dot { width: 6px; height: 6px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
     .dot.inactive { background: #FF453A; box-shadow: none; }
 
-    /* 右侧区域容器 */
     .right-ui-group {
       display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
       pointer-events: auto;
     }
 
-    /* 独立的相机开启按钮 */
     .cam-fab {
       width: 44px; height: 44px;
       background: rgba(255, 255, 255, 0.15);
@@ -73,7 +68,6 @@
     }
     .cam-fab:active { transform: scale(0.9); background: rgba(255,255,255,0.3); }
 
-    /* 波形图容器 */
     .lumetric-box {
       background: rgba(0, 0, 0, 0.7);
       border: 1px solid rgba(255, 255, 255, 0.2);
@@ -83,7 +77,6 @@
     }
     #waveformCanvas { width: 100px !important; height: 50px !important; display: block; }
 
-    /* 底部控制面板 */
     .control-sheet {
       position: absolute; bottom: 0; left: 0; right: 0;
       background: var(--glass-bg);
@@ -97,19 +90,14 @@
       transform: translateY(0);
     }
 
-    /* 收起状态 */
     .control-sheet.collapsed { transform: translateY(calc(100% - 40px)); }
 
-    /* 拖动/点击手柄 */
     .sheet-handle-area {
       width: 100%; height: 30px; position: absolute; top: 0; left: 0;
       display: flex; justify-content: center; align-items: center;
       cursor: pointer; z-index: 30;
-      /* 增加触摸区域 */
     }
-    .sheet-handle {
-      width: 40px; height: 5px; background: rgba(255,255,255,0.3); border-radius: 10px;
-    }
+    .sheet-handle { width: 40px; height: 5px; background: rgba(255,255,255,0.3); border-radius: 10px; }
 
     .actions-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
@@ -148,6 +136,7 @@
       border-radius: 30px; font-size: 13px; opacity: 0; pointer-events: none;
       transition: opacity 0.3s; z-index: 100; backdrop-filter: blur(10px);
       border: 1px solid rgba(255,255,255,0.1);
+      text-align: center; width: 80%;
     }
   </style>
 </head>
@@ -163,7 +152,6 @@
     
     <div class="right-ui-group">
       <div class="cam-fab" id="camFab" title="Start/Reset Camera">📷</div>
-      
       <div class="lumetric-box">
         <canvas id="waveformCanvas" width="200" height="100"></canvas>
       </div>
@@ -206,14 +194,12 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/PLYExporter.js"></script>
 
   <script>
-    // --- Config ---
     const CONFIG = {
       baseW: 320, 
       baseH: 240,
       bgColor: 0x050505
     };
 
-    // --- State ---
     let scene, camera, renderer, controls;
     let video, imgEl;
     let geometryParticles, geometryMesh, pointsObj, meshObj;
@@ -233,11 +219,10 @@
     const offCanvas = document.createElement('canvas');
     const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
     
-    // UI Elements
     const els = {
       sheet: document.getElementById('controlSheet'),
       sheetToggle: document.getElementById('sheetToggle'),
-      camFab: document.getElementById('camFab'), // 新的相机按钮
+      camFab: document.getElementById('camFab'),
       modeBtn: document.getElementById('toggleModeBtn'),
       exportBtn: document.getElementById('exportBtn'),
       switchBtn: document.getElementById('switchSourceBtn'),
@@ -259,11 +244,15 @@
       toast: document.getElementById('toast')
     };
 
-    // --- Init ---
     init();
     animate();
 
     function init() {
+      // 1. Check HTTPS
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+         alert("严重警告：摄像头功能必须在 HTTPS 环境下运行！当前环境可能无法开启摄像头。");
+      }
+
       scene = new THREE.Scene();
       scene.background = new THREE.Color(CONFIG.bgColor);
 
@@ -292,9 +281,16 @@
       scene.add(dirLight);
 
       resizeGrid(CONFIG.baseW, CONFIG.baseH);
-      setupVideo();
+      
+      // Init video element but don't auto-start to handle permissions better
+      video = document.createElement('video');
+      video.autoplay = true; video.muted = true; video.playsInline = true; 
+
       setupImageLoader();
       setupUI();
+      
+      // Try auto-start camera with fallback logic
+      startCamera();
       
       window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -303,7 +299,6 @@
       });
     }
 
-    // --- 3D Logic ---
     function resizeGrid(w, h) {
       if(w < 2 || h < 2) return; 
 
@@ -318,7 +313,6 @@
 
       const count = state.planeW * state.planeH;
 
-      // Particles
       geometryParticles = new THREE.BufferGeometry();
       const pos = new Float32Array(count * 3);
       const col = new Float32Array(count * 3);
@@ -336,7 +330,6 @@
       pointsObj = new THREE.Points(geometryParticles, particlesMat);
       scene.add(pointsObj);
 
-      // Mesh
       geometryMesh = new THREE.PlaneBufferGeometry(state.planeW, state.planeH, state.planeW - 1, state.planeH - 1);
       const meshCount = geometryMesh.attributes.position.count;
       geometryMesh.setAttribute('color', new THREE.BufferAttribute(new Float32Array(meshCount * 3), 3));
@@ -351,38 +344,58 @@
       meshObj.visible = state.mode === 'mesh';
     }
 
-    // --- Input Handling ---
-    function setupVideo() {
-      video = document.createElement('video');
-      video.autoplay = true; video.muted = true; video.playsInline = true; 
-      startCamera();
-    }
+    // --- Camera Robustness Logic ---
+    async function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("浏览器不支持摄像头 API (需 HTTPS)");
+        return;
+      }
 
-    function startCamera() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-      
-      // Stop existing tracks if any
+      // Stop previous tracks
       if (video.srcObject) {
         video.srcObject.getTracks().forEach(track => track.stop());
       }
 
-      navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: "environment", width: CONFIG.baseW, height: CONFIG.baseH }
-      }).then(stream => {
+      try {
+        // 1. Try Environment Camera WITHOUT resolution constraints (Fix for 'OverconstrainedError')
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: "environment" }
+        });
+        handleStream(stream);
+      } catch (err) {
+        console.warn("Env cam failed, retrying generic...", err);
+        try {
+          // 2. Fallback: Any camera
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: true
+          });
+          handleStream(stream);
+        } catch (err2) {
+          console.error(err2);
+          let msg = "无法开启摄像头";
+          if (err2.name === 'NotAllowedError') msg = "权限被拒绝：请允许摄像头访问";
+          else if (err2.name === 'NotFoundError') msg = "未找到摄像头";
+          else if (err2.name === 'NotReadableError') msg = "摄像头被占用";
+          else if (err2.name === 'OverconstrainedError') msg = "设备不支持请求的配置";
+          
+          showToast(msg);
+          // Fallback to image mode silently if fail
+          state.source = 'image';
+          updateUIMode();
+        }
+      }
+    }
+
+    function handleStream(stream) {
         video.srcObject = stream;
-        video.play();
-        state.source = 'camera'; // Force source state
+        video.play().catch(e => console.error("Play error:", e));
+        state.source = 'camera';
         updateUIMode();
         updateStatus(true, "Camera Live");
-        // Reset grid to base resolution for camera performance
+        // Reset grid to low res for performance default
         resizeGrid(CONFIG.baseW, CONFIG.baseH);
-      }).catch((e) => {
-        console.error(e);
-        showToast("Camera Error");
-        state.source = 'image';
-        updateUIMode();
-      });
     }
 
     function setupImageLoader() {
@@ -408,7 +421,6 @@
       resizeGrid(w, h);
     }
 
-    // --- Render ---
     function animate() {
       requestAnimationFrame(animate);
       if(updateTexture()) {
@@ -424,6 +436,7 @@
         if (!video || video.readyState < 2 || video.videoWidth === 0) return false;
         const vw = video.videoWidth, vh = video.videoHeight;
         const cw = state.planeW, ch = state.planeH;
+        // Cover logic
         const scale = Math.max(cw/vw, ch/vh);
         const dw = vw * scale, dh = vh * scale;
         offCtx.drawImage(video, (cw - dw)/2, (ch - dh)/2, dw, dh);
@@ -490,33 +503,26 @@
       }
     }
 
-    // --- UI Actions ---
     function setupUI() {
-      // 1. 菜单开关逻辑
-      const toggleMenu = () => {
-        els.sheet.classList.toggle('collapsed');
-      };
+      const toggleMenu = () => els.sheet.classList.toggle('collapsed');
       
-      // 点击 Handle 切换菜单
       els.sheetToggle.addEventListener('click', (e) => {
-        e.stopPropagation(); // 防止冒泡到 canvas
+        e.stopPropagation();
         toggleMenu();
       });
 
-      // 2. 点击背景关闭菜单
+      // Click background to close menu
       renderer.domElement.addEventListener('click', () => {
         if (!els.sheet.classList.contains('collapsed')) {
           els.sheet.classList.add('collapsed');
         }
       });
 
-      // 3. 独立相机按钮 (FAB)
       els.camFab.addEventListener('click', () => {
         showToast("Starting Camera...");
-        startCamera(); // 强制重启/启动摄像头
+        startCamera();
       });
 
-      // 其他按钮
       els.modeBtn.addEventListener('click', () => {
         state.mode = state.mode === 'mesh' ? 'points' : 'mesh';
         els.modeBtn.textContent = state.mode === 'mesh' ? 'View Points' : 'View Mesh';
@@ -582,7 +588,7 @@
     function showToast(msg) {
       els.toast.textContent = msg;
       els.toast.style.opacity = 1;
-      setTimeout(() => els.toast.style.opacity = 0, 2000);
+      setTimeout(() => els.toast.style.opacity = 0, 3000);
     }
 
     function performExport() {
@@ -613,7 +619,7 @@
              });
           }
         } catch(e) {
-          showToast("Export Failed");
+          showToast("Export Failed: " + e.message);
         }
       }, 100);
     }
