@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Lumetric Scanner Pro</title>
+  <title>Lumetric Slit-Scan</title>
   
   <style>
     /* =========================================
@@ -14,6 +14,8 @@
       --glass-bg: rgba(20, 20, 20, 0.85);
       --glass-border: rgba(255, 255, 255, 0.15);
       --accent: #0A84FF;
+      --danger: #FF453A;
+      --active: #FFD60A; /* Yellow for painting */
       --text-main: #FFFFFF;
       --radius: 16px;
     }
@@ -31,6 +33,7 @@
       position: absolute; top: 0; left: 0; z-index: 1;
     }
 
+    /* 顶部 UI */
     .top-ui {
       position: absolute; top: env(safe-area-inset-top, 15px); 
       left: 15px; right: 15px;
@@ -49,29 +52,43 @@
     }
     .dot { width: 6px; height: 6px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
     .dot.inactive { background: #FF453A; box-shadow: none; }
+    .dot.painting { background: var(--active); box-shadow: 0 0 8px var(--active); animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 
     .right-ui-group {
       display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
       pointer-events: auto;
     }
 
-    /* Changed from icon to text button */
-    .cam-fab {
-      /* width: 44px; height: 44px; Removed fixed size */
-      padding: 8px 16px; /* Added padding for text */
+    /* 功能按钮组 */
+    .fab-group { display: flex; gap: 10px; }
+
+    .fab {
+      height: 44px; padding: 0 16px;
       background: rgba(255, 255, 255, 0.15);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 20px; /* Changed to pill shape */
+      border-radius: 22px;
       display: flex; justify-content: center; align-items: center;
-      font-size: 14px; /* Reduced font size */
-      font-weight: 600; /* Added font weight */
-      cursor: pointer;
+      font-size: 14px; font-weight: 600; cursor: pointer;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      transition: transform 0.2s, background 0.2s;
-      color: var(--text-main); /* Ensure text color is correct */
+      transition: all 0.2s;
+      color: var(--text-main);
     }
-    .cam-fab:active { transform: scale(0.95); background: rgba(255,255,255,0.3); }
+    .fab:active { transform: scale(0.95); }
+    
+    /* 绘制按钮激活状态 */
+    .fab.active-paint {
+      background: var(--active);
+      color: #000;
+      border-color: var(--active);
+    }
+    
+    /* 清除按钮 */
+    .fab.clear-btn {
+      width: 44px; padding: 0; color: var(--danger); border-color: rgba(255, 69, 58, 0.3);
+    }
 
     .lumetric-box {
       background: rgba(0, 0, 0, 0.7);
@@ -82,6 +99,7 @@
     }
     #waveformCanvas { width: 100px !important; height: 50px !important; display: block; }
 
+    /* 底部面板 */
     .control-sheet {
       position: absolute; bottom: 0; left: 0; right: 0;
       background: var(--glass-bg);
@@ -94,7 +112,6 @@
       max-height: 70vh; overflow-y: auto;
       transform: translateY(0);
     }
-
     .control-sheet.collapsed { transform: translateY(calc(100% - 40px)); }
 
     .sheet-handle-area {
@@ -152,11 +169,16 @@
   <div class="top-ui">
     <div class="status-badge">
       <span class="dot" id="statusDot"></span>
-      <span id="sourceText">System Ready</span>
+      <span id="sourceText">Ready</span>
     </div>
     
     <div class="right-ui-group">
-      <div class="cam-fab" id="camFab" title="Start/Reset Camera">Camera</div>
+      <div class="fab-group">
+        <div class="fab clear-btn" id="clearFab" title="Clear Scan">🗑️</div>
+        <div class="fab" id="paintFab" title="Hold to Paint">🖌️ Paint</div>
+        <div class="fab" id="camFab" title="Start/Reset Camera">📷</div>
+      </div>
+      
       <div class="lumetric-box">
         <canvas id="waveformCanvas" width="200" height="100"></canvas>
       </div>
@@ -170,7 +192,7 @@
 
     <div class="actions-grid">
       <button class="btn primary" id="toggleModeBtn">View Points</button>
-      <button class="btn accent" id="exportBtn">Download</button>
+      <button class="btn accent" id="exportBtn">Export All</button>
       <button class="btn" id="switchSourceBtn">Switch Mode</button>
       <div class="btn file-upload">
         Load Image
@@ -181,6 +203,11 @@
     <div class="slider-container">
       <div class="slider-label"><span>Extrusion Z</span><span class="slider-value" id="extrusionVal">300</span></div>
       <input type="range" id="extrusionSlider" min="0" max="800" value="300">
+    </div>
+
+    <div class="slider-container">
+      <div class="slider-label"><span>Scan Speed</span><span class="slider-value" id="speedVal">20</span></div>
+      <input type="range" id="speedSlider" min="0" max="100" value="20" step="5">
     </div>
 
     <div class="slider-container">
@@ -195,6 +222,7 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/PLYExporter.js"></script>
 
@@ -209,16 +237,20 @@
     let video, imgEl;
     let geometryParticles, geometryMesh, pointsObj, meshObj;
     let particlesMat, meshMat;
+    let paintedGroup; // 用于存放绘制的轨迹
     
     let state = {
-      mode: 'mesh', 
+      mode: 'mesh', // 'mesh' or 'points'
       source: 'camera', 
       extrusion: 300,
       pointSize: 2,
       resScale: 1,
       imageLoaded: false,
       planeW: 0,
-      planeH: 0
+      planeH: 0,
+      isPainting: false, // 是否正在绘制
+      lastPaintTime: 0,
+      scanSpeed: 20 // 扫描后退速度
     };
 
     const offCanvas = document.createElement('canvas');
@@ -228,6 +260,8 @@
       sheet: document.getElementById('controlSheet'),
       sheetToggle: document.getElementById('sheetToggle'),
       camFab: document.getElementById('camFab'),
+      paintFab: document.getElementById('paintFab'),
+      clearFab: document.getElementById('clearFab'),
       modeBtn: document.getElementById('toggleModeBtn'),
       exportBtn: document.getElementById('exportBtn'),
       switchBtn: document.getElementById('switchSourceBtn'),
@@ -235,12 +269,14 @@
       sliders: {
         ext: document.getElementById('extrusionSlider'),
         size: document.getElementById('pointSizeSlider'),
-        res: document.getElementById('resSlider')
+        res: document.getElementById('resSlider'),
+        speed: document.getElementById('speedSlider')
       },
       vals: {
         ext: document.getElementById('extrusionVal'),
         size: document.getElementById('pointSizeVal'),
-        res: document.getElementById('resVal')
+        res: document.getElementById('resVal'),
+        speed: document.getElementById('speedVal')
       },
       resContainer: document.getElementById('resContainer'),
       sourceText: document.getElementById('sourceText'),
@@ -255,7 +291,7 @@
     function init() {
       // 1. Check HTTPS
       if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-         alert("严重警告：摄像头功能必须在 HTTPS 环境下运行！当前环境可能无法开启摄像头。");
+         alert("严重警告：摄像头功能必须在 HTTPS 环境下运行！");
       }
 
       scene = new THREE.Scene();
@@ -264,7 +300,7 @@
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 10000);
       camera.position.set(0, 0, 600);
 
-      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.domElement.id = 'mainCanvas';
@@ -280,6 +316,10 @@
         shininess: 30, flatShading: true 
       });
 
+      // Group for painted strokes
+      paintedGroup = new THREE.Group();
+      scene.add(paintedGroup);
+
       scene.add(new THREE.AmbientLight(0xffffff, 0.5));
       const dirLight = new THREE.DirectionalLight(0xffffff, 1);
       dirLight.position.set(0, 200, 200);
@@ -287,14 +327,11 @@
 
       resizeGrid(CONFIG.baseW, CONFIG.baseH);
       
-      // Init video element but don't auto-start to handle permissions better
       video = document.createElement('video');
       video.autoplay = true; video.muted = true; video.playsInline = true; 
 
       setupImageLoader();
       setupUI();
-      
-      // Try auto-start camera with fallback logic
       startCamera();
       
       window.addEventListener('resize', () => {
@@ -332,7 +369,9 @@
       
       geometryParticles.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geometryParticles.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      // 用于标记哪些点是有效的（比如黑色背景可以剔除，这里暂保留全部）
       pointsObj = new THREE.Points(geometryParticles, particlesMat);
+      // 实时预览的物体不需要加入 paintedGroup，直接加到scene
       scene.add(pointsObj);
 
       geometryMesh = new THREE.PlaneBufferGeometry(state.planeW, state.planeH, state.planeW - 1, state.planeH - 1);
@@ -349,44 +388,20 @@
       meshObj.visible = state.mode === 'mesh';
     }
 
-    // --- Camera Robustness Logic ---
+    // --- Core Logic ---
     async function startCamera() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        alert("浏览器不支持摄像头 API (需 HTTPS)");
-        return;
-      }
-
-      // Stop previous tracks
-      if (video.srcObject) {
-        video.srcObject.getTracks().forEach(track => track.stop());
-      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      if (video.srcObject) video.srcObject.getTracks().forEach(track => track.stop());
 
       try {
-        // 1. Try Environment Camera WITHOUT resolution constraints (Fix for 'OverconstrainedError')
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: "environment" }
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "environment" } });
         handleStream(stream);
       } catch (err) {
-        console.warn("Env cam failed, retrying generic...", err);
         try {
-          // 2. Fallback: Any camera
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: true
-          });
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
           handleStream(stream);
         } catch (err2) {
-          console.error(err2);
-          let msg = "无法开启摄像头";
-          if (err2.name === 'NotAllowedError') msg = "权限被拒绝：请允许摄像头访问";
-          else if (err2.name === 'NotFoundError') msg = "未找到摄像头";
-          else if (err2.name === 'NotReadableError') msg = "摄像头被占用";
-          else if (err2.name === 'OverconstrainedError') msg = "设备不支持请求的配置";
-          
-          showToast(msg);
-          // Fallback to image mode silently if fail
+          showToast("Camera access failed");
           state.source = 'image';
           updateUIMode();
         }
@@ -395,11 +410,10 @@
 
     function handleStream(stream) {
         video.srcObject = stream;
-        video.play().catch(e => console.error("Play error:", e));
+        video.play().catch(e => console.error(e));
         state.source = 'camera';
         updateUIMode();
-        updateStatus(true, "Camera Live");
-        // Reset grid to low res for performance default
+        updateStatus(true, "Ready");
         resizeGrid(CONFIG.baseW, CONFIG.baseH);
     }
 
@@ -410,7 +424,6 @@
         state.imageLoaded = true;
         state.source = 'image';
         applyImageResolution();
-        updateStatus(true, "Image Loaded");
         updateUIMode();
       };
     }
@@ -428,10 +441,15 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      if(updateTexture()) {
-        processGeometry();
+      
+      const hasNewFrame = updateTexture();
+      
+      if(hasNewFrame) {
+        processGeometry(); // 更新实时预览
+        if (state.isPainting) paintFrame(); // 绘制逻辑
         if (renderer.info.render.frame % 3 === 0) drawLumetric();
       }
+      
       controls.update();
       renderer.render(scene, camera);
     }
@@ -441,7 +459,6 @@
         if (!video || video.readyState < 2 || video.videoWidth === 0) return false;
         const vw = video.videoWidth, vh = video.videoHeight;
         const cw = state.planeW, ch = state.planeH;
-        // Cover logic
         const scale = Math.max(cw/vw, ch/vh);
         const dw = vw * scale, dh = vh * scale;
         offCtx.drawImage(video, (cw - dw)/2, (ch - dh)/2, dw, dh);
@@ -460,16 +477,17 @@
       const posAttr = activeGeo.attributes.position;
       const colAttr = activeGeo.attributes.color;
       const count = posAttr.count;
-      
       if (imgData.length < count * 4) return;
 
       const extr = state.extrusion;
+      
+      // 更新 Z 轴数据和颜色
       for (let i = 0; i < count; i++) {
         const ptr = i * 4;
         const r = imgData[ptr], g = imgData[ptr+1], b = imgData[ptr+2];
         const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
         
-        posAttr.array[i*3+2] = lum * extr;
+        posAttr.array[i*3+2] = lum * extr; // 实时预览始终在 Z=0 附近变化
         colAttr.array[i*3] = r/255; 
         colAttr.array[i*3+1] = g/255; 
         colAttr.array[i*3+2] = b/255;
@@ -484,6 +502,149 @@
       }
     }
 
+    // --- 核心绘制逻辑 (Slit Scan) ---
+    function paintFrame() {
+      const now = Date.now();
+      // 限制绘制频率 (例如每 50ms 一帧)
+      if (now - state.lastPaintTime < 50) return;
+      state.lastPaintTime = now;
+
+      // 1. 将已有的所有绘制层向后推移 (Time Tunnel Effect)
+      // 这样新的帧总是画在前面，旧的向深处移动
+      const moveDist = state.scanSpeed;
+      if (moveDist > 0) {
+        paintedGroup.children.forEach(child => {
+          child.position.z -= moveDist; 
+        });
+      }
+
+      // 2. 克隆当前的几何体
+      let newObj;
+      
+      // 为了性能，绘制模式通常建议使用 Points，Mesh 会非常卡
+      // 但这里根据当前模式决定
+      if (state.mode === 'points') {
+        const geoClone = geometryParticles.clone();
+        newObj = new THREE.Points(geoClone, particlesMat.clone()); // 材质也克隆以防互相影响(可选)
+      } else {
+        // Mesh 模式：克隆 Mesh 几何体
+        const geoClone = geometryMesh.clone();
+        newObj = new THREE.Mesh(geoClone, meshMat.clone());
+      }
+
+      // 3. 将新对象添加到组
+      // 它的位置初始是 (0,0,0) (相对于 paintedGroup)，正好在相机前方
+      paintedGroup.add(newObj);
+
+      // 4. 性能保护：如果层数太多，移除最远的（可选）
+      if (paintedGroup.children.length > 60) {
+        const old = paintedGroup.children.shift(); // 移除最早的
+        if (old.geometry) old.geometry.dispose();
+        if (old.material) old.material.dispose();
+        paintedGroup.remove(old);
+      }
+    }
+
+    function clearPaint() {
+      // 清空所有绘制
+      while(paintedGroup.children.length > 0){ 
+        const child = paintedGroup.children[0];
+        paintedGroup.remove(child);
+        if(child.geometry) child.geometry.dispose();
+      }
+      showToast("Scan Cleared");
+    }
+
+    // --- 导出逻辑 (合并所有层) ---
+    function performExport() {
+      showToast("Merging & Saving...");
+      setTimeout(() => {
+        try {
+          const timestamp = Date.now();
+          
+          // 1. 下载参考图
+          offCanvas.toBlob((blob) => {
+            if(blob) downloadBlob(blob, `scan_ref_${timestamp}.jpg`);
+          }, 'image/jpeg', 0.95);
+
+          // 2. 收集所有要导出的对象 (实时预览 + 绘制的历史轨迹)
+          // 注意：需要应用它们的 transforms (位置偏移) 到几何体数据中
+          let geometriesToMerge = [];
+          const allObjects = [...paintedGroup.children];
+          
+          // 是否包含当前的实时预览帧？通常是的
+          if (state.mode === 'points') allObjects.push(pointsObj);
+          else allObjects.push(meshObj);
+
+          // 遍历并准备合并
+          allObjects.forEach(obj => {
+            if (!obj.visible) return;
+            
+            const g = obj.geometry.clone();
+            // 应用当前对象在世界空间中的变换矩阵 (处理位移)
+            obj.updateMatrixWorld();
+            g.applyMatrix4(obj.matrixWorld);
+            
+            // 确保都有 color 属性
+            if (!g.attributes.color) {
+                // 如果没有颜色，填充白色 (防错)
+                const count = g.attributes.position.count;
+                const colors = new Float32Array(count * 3).fill(1);
+                g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            }
+            
+            geometriesToMerge.push(g);
+          });
+
+          if (geometriesToMerge.length === 0) { showToast("Nothing to export"); return; }
+
+          // 合并几何体
+          // 注意：Three.js 的 mergeBufferGeometries 要求属性一致。
+          // 我们的生成逻辑保证了它们都是同构的。
+          const mergedGeo = THREE.BufferGeometryUtils.mergeBufferGeometries(geometriesToMerge);
+
+          if (state.mode === 'points') {
+             // 导出 PTS
+             const pos = mergedGeo.attributes.position.array;
+             const col = mergedGeo.attributes.color.array;
+             const cnt = mergedGeo.attributes.position.count;
+             let output = "";
+             // 限制导出大小，防止崩溃 (pts是纯文本，很大)
+             const step = cnt > 200000 ? 2 : 1; // 简单降采样
+             for(let i=0; i<cnt; i+=step) {
+               const x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2];
+               const r = Math.floor(col[i*3]*255), g = Math.floor(col[i*3+1]*255), b = Math.floor(col[i*3+2]*255);
+               output += `${x.toFixed(3)} ${y.toFixed(3)} ${z.toFixed(3)} ${r} ${g} ${b}\n`;
+             }
+             downloadBlob(new Blob([output], {type: 'text/plain'}), `scan_merged_${timestamp}.asc`);
+          } else {
+             // 导出 PLY
+             const exporter = new THREE.PLYExporter();
+             const tempMesh = new THREE.Mesh(mergedGeo, meshMat);
+             exporter.parse(tempMesh, (res) => {
+               downloadBlob(new Blob([res], {type: 'text/plain'}), `scan_merged_${timestamp}.ply`);
+             });
+          }
+          
+          // 清理内存
+          mergedGeo.dispose();
+          geometriesToMerge.forEach(g => g.dispose());
+
+        } catch(e) {
+          console.error(e);
+          showToast("Export Failed (Memory Limit?)");
+        }
+      }, 200); // 稍长延时给 UI 反应
+    }
+
+    function downloadBlob(blob, name) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
     function drawLumetric() {
       const ctx = els.waveform;
       const w = ctx.canvas.width;
@@ -492,8 +653,9 @@
       ctx.fillRect(0, 0, w, h);
       
       const imgData = offCtx.getImageData(0, 0, state.planeW, state.planeH).data;
-      ctx.fillStyle = '#32D74B'; 
+      ctx.fillStyle = state.isPainting ? '#FFD60A' : '#32D74B'; // 绘制时变色
 
+      const step = Math.ceil(state.planeW / w);
       for (let x = 0; x < w; x++) {
         const srcX = Math.floor(x * (state.planeW / w));
         for(let y=0; y<state.planeH; y+=20) {
@@ -508,24 +670,34 @@
       }
     }
 
+    // --- UI ---
     function setupUI() {
       const toggleMenu = () => els.sheet.classList.toggle('collapsed');
-      
-      els.sheetToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleMenu();
-      });
-
-      // Click background to close menu
+      els.sheetToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
       renderer.domElement.addEventListener('click', () => {
-        if (!els.sheet.classList.contains('collapsed')) {
-          els.sheet.classList.add('collapsed');
-        }
+        if (!els.sheet.classList.contains('collapsed')) els.sheet.classList.add('collapsed');
       });
 
-      els.camFab.addEventListener('click', () => {
-        showToast("Starting Camera...");
-        startCamera();
+      // Camera Btn
+      els.camFab.addEventListener('click', () => { showToast("Resetting..."); startCamera(); });
+
+      // Clear Btn
+      els.clearFab.addEventListener('click', clearPaint);
+
+      // Paint Btn (Toggle)
+      els.paintFab.addEventListener('click', () => {
+        state.isPainting = !state.isPainting;
+        if (state.isPainting) {
+          els.paintFab.classList.add('active-paint');
+          els.paintFab.innerHTML = "🛑 Stop";
+          els.statusDot.classList.add('painting');
+          els.sourceText.textContent = "Scanning...";
+        } else {
+          els.paintFab.classList.remove('active-paint');
+          els.paintFab.innerHTML = "🖌️ Paint";
+          els.statusDot.classList.remove('painting');
+          els.sourceText.textContent = "Ready";
+        }
       });
 
       els.modeBtn.addEventListener('click', () => {
@@ -539,6 +711,7 @@
         if (state.source === 'camera') {
           if (state.imageLoaded) {
             state.source = 'image';
+            state.isPainting = false; // 切换模式停止绘制
             updateUIMode();
             applyImageResolution();
           } else {
@@ -560,6 +733,12 @@
         state.extrusion = parseFloat(e.target.value);
         els.vals.ext.textContent = state.extrusion;
       });
+      
+      // Speed Slider
+      els.sliders.speed.addEventListener('input', (e) => {
+        state.scanSpeed = parseInt(e.target.value);
+        els.vals.speed.textContent = state.scanSpeed;
+      });
 
       els.sliders.size.addEventListener('input', (e) => {
         state.pointSize = parseFloat(e.target.value);
@@ -579,10 +758,11 @@
 
     function updateUIMode() {
       const isImg = state.source === 'image';
-      els.sourceText.textContent = isImg ? "Source: Image" : "Source: Camera";
+      els.sourceText.textContent = isImg ? "Image Mode" : "Ready";
       els.resContainer.style.opacity = isImg ? '1' : '0.5';
       els.resContainer.style.pointerEvents = isImg ? 'auto' : 'none';
       els.statusDot.className = 'dot'; 
+      // 绘制功能在图片模式下也可以用，但主要是为摄像头设计的
     }
 
     function updateStatus(active, text) {
@@ -594,47 +774,6 @@
       els.toast.textContent = msg;
       els.toast.style.opacity = 1;
       setTimeout(() => els.toast.style.opacity = 0, 3000);
-    }
-
-    function performExport() {
-      showToast("Saving...");
-      setTimeout(() => {
-        try {
-          const timestamp = Date.now();
-          offCanvas.toBlob((blob) => {
-            if(blob) downloadBlob(blob, `scan_ref_${timestamp}.jpg`);
-          }, 'image/jpeg', 0.95);
-
-          if (state.mode === 'points') {
-             const pos = geometryParticles.attributes.position.array;
-             const col = geometryParticles.attributes.color.array;
-             const cnt = geometryParticles.attributes.position.count;
-             let output = "";
-             for(let i=0; i<cnt; i++) {
-               const x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2];
-               const r = Math.floor(col[i*3]*255), g = Math.floor(col[i*3+1]*255), b = Math.floor(col[i*3+2]*255);
-               output += `${x.toFixed(3)} ${y.toFixed(3)} ${z.toFixed(3)} ${r} ${g} ${b}\n`;
-             }
-             downloadBlob(new Blob([output], {type: 'text/plain'}), `scan_points_${timestamp}.asc`);
-          } else {
-             const exporter = new THREE.PLYExporter();
-             const tempMesh = new THREE.Mesh(geometryMesh.clone(), meshMat);
-             exporter.parse(tempMesh, (res) => {
-               downloadBlob(new Blob([res], {type: 'text/plain'}), `scan_mesh_${timestamp}.ply`);
-             });
-          }
-        } catch(e) {
-          showToast("Export Failed: " + e.message);
-        }
-      }, 100);
-    }
-
-    function downloadBlob(blob, name) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }
   </script>
 </body>
