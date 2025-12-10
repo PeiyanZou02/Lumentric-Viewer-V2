@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Lumetric Scanner</title>
+  
+  <style>
+    /* =========================================
+       CSS STYLES
+       ========================================= */
+    :root {
+      --bg-color: #000000;
+      --glass-bg: rgba(20, 20, 20, 0.85); /* 更深一点，增加对比 */
+      --glass-border: rgba(255, 255, 255, 0.15);
+      --accent: #0A84FF;
+      --text-main: #FFFFFF;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; user-select: none; }
+    
+    body {
+      margin: 0; overflow: hidden; background: var(--bg-color);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
+      color: var(--text-main);
+    }
+
+    /* 修复核心：只让主3D画布全屏，不影响波形图 */
+    #mainCanvas {
+      display: block; width: 100vw; height: 100vh; touch-action: none;
+      position: absolute; top: 0; left: 0; z-index: 1;
+    }
+
+    /* 顶部 UI 容器 */
+    .top-ui {
+      position: absolute; top: env(safe-area-inset-top, 15px); 
+      left: 15px; right: 15px;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      z-index: 10; pointer-events: none;
+    }
+
+    /* 左侧状态胶囊 */
+    .status-badge {
+      font-size: 12px; font-weight: 600;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(8px);
+      padding: 6px 12px; border-radius: 20px;
+      display: flex; align-items: center; gap: 8px;
+      border: 1px solid var(--glass-border);
+      height: 32px;
+    }
+    .dot { width: 6px; height: 6px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
+    .dot.inactive { background: #FF453A; box-shadow: none; }
+
+    /* 右侧 Lumetric 波形图容器 */
+    .lumetric-container {
+      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+    }
+    
+    /* 波形图 Canvas 样式 - 强制固定大小，防止被拉伸 */
+    #waveformCanvas {
+      width: 120px !important; 
+      height: 60px !important;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      backdrop-filter: blur(4px);
+    }
+    
+    .lumetric-label {
+      font-size: 10px; color: rgba(255,255,255,0.5); font-family: monospace;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+
+    /* 底部控制面板 */
+    .control-sheet {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: var(--glass-bg);
+      backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+      border-radius: var(--radius) var(--radius) 0 0;
+      border-top: 1px solid var(--glass-border);
+      padding: 15px 20px calc(20px + env(safe-area-inset-bottom));
+      z-index: 20;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      max-height: 70vh; overflow-y: auto;
+    }
+
+    .control-sheet.collapsed { transform: translateY(calc(100% - 50px)); }
+
+    .sheet-handle-area {
+      width: 100%; height: 25px; position: absolute; top: 0; left: 0;
+      display: flex; justify-content: center; align-items: center;
+      cursor: pointer; z-index: 30;
+    }
+    .sheet-handle {
+      width: 36px; height: 4px; background: rgba(255,255,255,0.3); border-radius: 10px;
+    }
+
+    .actions-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      margin-top: 10px; margin-bottom: 20px;
+    }
+
+    .btn {
+      background: rgba(255,255,255,0.12); border: none;
+      color: var(--text-main); padding: 14px; border-radius: 10px;
+      font-size: 13px; font-weight: 500; cursor: pointer;
+      text-align: center;
+    }
+    .btn:active { background: rgba(255,255,255,0.25); }
+    .btn.primary { background: var(--text-main); color: #000; font-weight: 600; }
+    .btn.accent { background: var(--accent); color: #fff; font-weight: 600; }
+
+    .file-upload { position: relative; overflow: hidden; }
+    .file-upload input { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; }
+
+    .slider-container { margin-bottom: 18px; }
+    .slider-label {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;
+    }
+    .slider-value { color: var(--text-main); font-weight: 600; font-family: monospace; }
+    
+    input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; background: transparent; }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; height: 20px; width: 20px; border-radius: 50%;
+      background: #fff; margin-top: -8px; box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    
+    #toast {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.9); color: white; padding: 10px 20px;
+      border-radius: 30px; font-size: 13px; opacity: 0; pointer-events: none;
+      transition: opacity 0.3s; z-index: 100; backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="toast">Ready</div>
+
+  <div class="top-ui">
+    <div class="status-badge">
+      <span class="dot" id="statusDot"></span>
+      <span id="sourceText">System Ready</span>
+    </div>
+    
+    <div class="lumetric-container">
+      <div class="lumetric-label">LUMETRIC SCOPE</div>
+      <canvas id="waveformCanvas" width="240" height="120"></canvas>
+    </div>
+  </div>
+
+  <div class="control-sheet" id="controlSheet">
+    <div class="sheet-handle-area" id="sheetToggle"><div class="sheet-handle"></div></div>
+
+    <div class="actions-grid">
+      <button class="btn primary" id="toggleModeBtn">View Points</button>
+      <button class="btn accent" id="exportBtn">Download</button>
+      <button class="btn" id="switchSourceBtn">Switch Cam</button>
+      <div class="btn file-upload">
+        Open Image
+        <input type="file" id="imageInput" accept="image/*">
+      </div>
+    </div>
+
+    <div class="slider-container">
+      <div class="slider-label"><span>Extrusion Z</span><span class="slider-value" id="extrusionVal">300</span></div>
+      <input type="range" id="extrusionSlider" min="0" max="800" value="300">
+    </div>
+
+    <div class="slider-container">
+      <div class="slider-label"><span>Point Size</span><span class="slider-value" id="pointSizeVal">2.0</span></div>
+      <input type="range" id="pointSizeSlider" min="1" max="10" value="2" step="0.5">
+    </div>
+
+    <div class="slider-container" id="resContainer" style="opacity:0.5; pointer-events:none;">
+      <div class="slider-label"><span>Image Quality</span><span class="slider-value" id="resVal">1x</span></div>
+      <input type="range" id="resSlider" min="1" max="4" value="1" step="1">
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/PLYExporter.js"></script>
+
+  <script>
+    // --- Config ---
+    const CONFIG = {
+      baseW: 320, 
+      baseH: 240,
+      bgColor: 0x050505 // 深色背景，略微提亮一点点
+    };
+
+    // --- State ---
+    let scene, camera, renderer, controls;
+    let video, imgEl;
+    let geometryParticles, geometryMesh, pointsObj, meshObj;
+    let particlesMat, meshMat;
+    
+    let state = {
+      mode: 'mesh', 
+      source: 'camera', 
+      extrusion: 300,
+      pointSize: 2,
+      resScale: 1,
+      imageLoaded: false,
+      planeW: 0,
+      planeH: 0
+    };
+
+    // Off-screen canvas for processing
+    const offCanvas = document.createElement('canvas');
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+    
+    // UI Elements
+    const els = {
+      sheet: document.getElementById('controlSheet'),
+      sheetToggle: document.getElementById('sheetToggle'),
+      modeBtn: document.getElementById('toggleModeBtn'),
+      exportBtn: document.getElementById('exportBtn'),
+      switchBtn: document.getElementById('switchSourceBtn'),
+      imgInput: document.getElementById('imageInput'),
+      sliders: {
+        ext: document.getElementById('extrusionSlider'),
+        size: document.getElementById('pointSizeSlider'),
+        res: document.getElementById('resSlider')
+      },
+      vals: {
+        ext: document.getElementById('extrusionVal'),
+        size: document.getElementById('pointSizeVal'),
+        res: document.getElementById('resVal')
+      },
+      resContainer: document.getElementById('resContainer'),
+      sourceText: document.getElementById('sourceText'),
+      statusDot: document.getElementById('statusDot'),
+      waveform: document.getElementById('waveformCanvas').getContext('2d'),
+      toast: document.getElementById('toast')
+    };
+
+    // --- Init ---
+    init();
+    animate();
+
+    function init() {
+      // Scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(CONFIG.bgColor);
+
+      // Camera
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 10000);
+      camera.position.set(0, 0, 600);
+
+      // Renderer (Added ID 'mainCanvas' to fix CSS issue)
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.domElement.id = 'mainCanvas'; // 关键修复：给ID
+      document.body.appendChild(renderer.domElement);
+
+      // Controls
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.enablePan = false;
+      
+      // Materials
+      particlesMat = new THREE.PointsMaterial({ size: state.pointSize, vertexColors: true });
+      meshMat = new THREE.MeshPhongMaterial({ 
+        vertexColors: true, side: THREE.DoubleSide, 
+        shininess: 30, flatShading: true 
+      });
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+      dirLight.position.set(0, 200, 200);
+      scene.add(dirLight);
+
+      // Start
+      resizeGrid(CONFIG.baseW, CONFIG.baseH);
+      setupVideo();
+      setupImageLoader();
+      setupUI();
+      
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    }
+
+    // --- 3D Logic ---
+    function resizeGrid(w, h) {
+      if(w < 2 || h < 2) return; 
+
+      if (pointsObj) { scene.remove(pointsObj); geometryParticles.dispose(); }
+      if (meshObj) { scene.remove(meshObj); geometryMesh.dispose(); }
+
+      state.planeW = Math.floor(w);
+      state.planeH = Math.floor(h);
+
+      offCanvas.width = state.planeW;
+      offCanvas.height = state.planeH;
+
+      const count = state.planeW * state.planeH;
+
+      // Particles
+      geometryParticles = new THREE.BufferGeometry();
+      const pos = new Float32Array(count * 3);
+      const col = new Float32Array(count * 3);
+      
+      for(let i=0; i<count; i++) {
+        const x = i % state.planeW;
+        const y = Math.floor(i / state.planeW);
+        pos[i*3] = x - state.planeW/2;       
+        pos[i*3+1] = (state.planeH/2) - y;   
+        pos[i*3+2] = 0;
+      }
+      
+      geometryParticles.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geometryParticles.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      pointsObj = new THREE.Points(geometryParticles, particlesMat);
+      scene.add(pointsObj);
+
+      // Mesh
+      geometryMesh = new THREE.PlaneBufferGeometry(state.planeW, state.planeH, state.planeW - 1, state.planeH - 1);
+      const meshCount = geometryMesh.attributes.position.count;
+      geometryMesh.setAttribute('color', new THREE.BufferAttribute(new Float32Array(meshCount * 3), 3));
+      meshObj = new THREE.Mesh(geometryMesh, meshMat);
+      scene.add(meshObj);
+
+      updateVisibility();
+    }
+
+    function updateVisibility() {
+      pointsObj.visible = state.mode === 'points';
+      meshObj.visible = state.mode === 'mesh';
+    }
+
+    // --- Input Handling ---
+    function setupVideo() {
+      video = document.createElement('video');
+      video.autoplay = true; video.muted = true; video.playsInline = true; 
+      startCamera();
+    }
+
+    function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "environment", width: CONFIG.baseW, height: CONFIG.baseH }
+      }).then(stream => {
+        video.srcObject = stream;
+        video.play();
+        updateStatus(true, "Camera Live");
+      }).catch(() => {
+        state.source = 'image';
+        updateUIMode();
+      });
+    }
+
+    function setupImageLoader() {
+      imgEl = new Image();
+      imgEl.crossOrigin = "Anonymous"; 
+      imgEl.onload = () => {
+        state.imageLoaded = true;
+        state.source = 'image';
+        applyImageResolution();
+        updateStatus(true, "Image Loaded");
+        updateUIMode();
+      };
+    }
+
+    function applyImageResolution() {
+      if (!state.imageLoaded) return;
+      const aspect = imgEl.naturalWidth / imgEl.naturalHeight;
+      const scale = state.resScale;
+      const baseH = CONFIG.baseH * scale;
+      let w, h;
+      if (aspect >= 1) { h = baseH; w = Math.round(h * aspect); } 
+      else { w = baseH; h = Math.round(w / aspect); }
+      resizeGrid(w, h);
+    }
+
+    // --- Render ---
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      if(updateTexture()) {
+        processGeometry();
+        // Draw lumetric every 3 frames for balance
+        if (renderer.info.render.frame % 3 === 0) drawLumetric();
+      }
+      
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function updateTexture() {
+      if (state.source === 'camera') {
+        if (!video || video.readyState < 2 || video.videoWidth === 0) return false;
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const cw = state.planeW, ch = state.planeH;
+        const scale = Math.max(cw/vw, ch/vh);
+        const dw = vw * scale, dh = vh * scale;
+        offCtx.drawImage(video, (cw - dw)/2, (ch - dh)/2, dw, dh);
+      } else {
+        if (!state.imageLoaded) return false;
+        offCtx.drawImage(imgEl, 0, 0, state.planeW, state.planeH);
+      }
+      return true;
+    }
+
+    function processGeometry() {
+      const imgData = offCtx.getImageData(0, 0, state.planeW, state.planeH).data;
+      const activeGeo = state.mode === 'points' ? geometryParticles : geometryMesh;
+      if(!activeGeo) return;
+      
+      const posAttr = activeGeo.attributes.position;
+      const colAttr = activeGeo.attributes.color;
+      const count = posAttr.count;
+      
+      if (imgData.length < count * 4) return;
+
+      const extr = state.extrusion;
+      for (let i = 0; i < count; i++) {
+        const ptr = i * 4;
+        const r = imgData[ptr], g = imgData[ptr+1], b = imgData[ptr+2];
+        const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
+        
+        posAttr.array[i*3+2] = lum * extr;
+        colAttr.array[i*3] = r/255; 
+        colAttr.array[i*3+1] = g/255; 
+        colAttr.array[i*3+2] = b/255;
+      }
+      
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+      
+      if (state.mode === 'mesh') {
+        activeGeo.computeVertexNormals();
+        activeGeo.attributes.normal.needsUpdate = true;
+      }
+    }
+
+    // --- Lumetric Scope Logic ---
+    function drawLumetric() {
+      const ctx = els.waveform;
+      const w = ctx.canvas.width;
+      const h = ctx.canvas.height;
+      
+      // Clear with semi-transparent black
+      ctx.fillStyle = 'rgba(0,0,0,1)'; 
+      ctx.fillRect(0, 0, w, h);
+      
+      const imgData = offCtx.getImageData(0, 0, state.planeW, state.planeH).data;
+      
+      // Histogram / Waveform simulation
+      // X axis = Horizontal position on screen
+      // Y axis = Intensity (Luma)
+      ctx.fillStyle = '#32D74B'; // Tech Green
+      // ctx.globalCompositeOperation = 'lighter'; // Additive blending for "glow"
+
+      const step = Math.ceil(state.planeW / w); 
+      
+      // Draw a simplified waveform: Scan columns
+      for (let x = 0; x < w; x++) {
+        // Sample the middle vertical strip relative to this x
+        const srcX = Math.floor(x * (state.planeW / w));
+        
+        // Sample roughly 10 points vertically for this column
+        for(let y=0; y<state.planeH; y+=20) {
+            const idx = (y * state.planeW + srcX) * 4;
+            if(idx < imgData.length) {
+                const r = imgData[idx], g = imgData[idx+1], b = imgData[idx+2];
+                const luma = (0.299*r + 0.587*g + 0.114*b) / 255;
+                
+                const py = h - (luma * h);
+                ctx.fillRect(x, py, 1, 1.5); // Draw dot
+            }
+        }
+      }
+    }
+
+    // --- UI Actions ---
+    function setupUI() {
+      let isExpanded = false;
+      els.sheetToggle.addEventListener('click', () => {
+        isExpanded = !isExpanded;
+        els.sheet.classList.toggle('collapsed', !isExpanded);
+      });
+
+      els.modeBtn.addEventListener('click', () => {
+        state.mode = state.mode === 'mesh' ? 'points' : 'mesh';
+        els.modeBtn.textContent = state.mode === 'mesh' ? 'View Points' : 'View Mesh';
+        els.modeBtn.classList.toggle('primary'); 
+        updateVisibility();
+      });
+
+      els.switchBtn.addEventListener('click', () => {
+        if (state.source === 'camera') {
+          if (state.imageLoaded) {
+            state.source = 'image';
+            updateUIMode();
+            applyImageResolution();
+          } else {
+            els.imgInput.click();
+          }
+        } else {
+          state.source = 'camera';
+          updateUIMode();
+          resizeGrid(CONFIG.baseW, CONFIG.baseH); 
+        }
+      });
+
+      els.imgInput.addEventListener('change', (e) => {
+        if(e.target.files && e.target.files[0]) {
+          const url = URL.createObjectURL(e.target.files[0]);
+          imgEl.src = url; 
+        }
+      });
+
+      els.sliders.ext.addEventListener('input', (e) => {
+        state.extrusion = parseFloat(e.target.value);
+        els.vals.ext.textContent = state.extrusion;
+      });
+
+      els.sliders.size.addEventListener('input', (e) => {
+        state.pointSize = parseFloat(e.target.value);
+        els.vals.size.textContent = state.pointSize.toFixed(1);
+        particlesMat.size = state.pointSize;
+      });
+
+      els.sliders.res.addEventListener('input', (e) => {
+        state.resScale = parseInt(e.target.value);
+        els.vals.res.textContent = state.resScale + "x";
+        clearTimeout(window.resTimer);
+        window.resTimer = setTimeout(applyImageResolution, 200);
+      });
+
+      els.exportBtn.addEventListener('click', performExport);
+    }
+
+    function updateUIMode() {
+      const isImg = state.source === 'image';
+      els.sourceText.textContent = isImg ? "Source: Image" : "Source: Camera";
+      els.switchBtn.textContent = isImg ? "To Camera" : "To Image";
+      els.resContainer.style.opacity = isImg ? '1' : '0.5';
+      els.resContainer.style.pointerEvents = isImg ? 'auto' : 'none';
+      els.statusDot.className = 'dot'; 
+    }
+
+    function updateStatus(active, text) {
+      els.statusDot.className = active ? 'dot' : 'dot inactive';
+      els.sourceText.textContent = text;
+    }
+
+    function showToast(msg) {
+      els.toast.textContent = msg;
+      els.toast.style.opacity = 1;
+      setTimeout(() => els.toast.style.opacity = 0, 2000);
+    }
+
+    function performExport() {
+      showToast("Saving...");
+      setTimeout(() => {
+        try {
+          const timestamp = Date.now();
+          offCanvas.toBlob((blob) => {
+            if(blob) downloadBlob(blob, `scan_ref_${timestamp}.jpg`);
+          }, 'image/jpeg', 0.95);
+
+          if (state.mode === 'points') {
+             const pos = geometryParticles.attributes.position.array;
+             const col = geometryParticles.attributes.color.array;
+             const cnt = geometryParticles.attributes.position.count;
+             let output = "";
+             for(let i=0; i<cnt; i++) {
+               const x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2];
+               const r = Math.floor(col[i*3]*255), g = Math.floor(col[i*3+1]*255), b = Math.floor(col[i*3+2]*255);
+               output += `${x.toFixed(3)} ${y.toFixed(3)} ${z.toFixed(3)} ${r} ${g} ${b}\n`;
+             }
+             downloadBlob(new Blob([output], {type: 'text/plain'}), `scan_points_${timestamp}.asc`);
+          } else {
+             const exporter = new THREE.PLYExporter();
+             const tempMesh = new THREE.Mesh(geometryMesh.clone(), meshMat);
+             exporter.parse(tempMesh, (res) => {
+               downloadBlob(new Blob([res], {type: 'text/plain'}), `scan_mesh_${timestamp}.ply`);
+             });
+          }
+        } catch(e) {
+          showToast("Export Failed");
+        }
+      }, 100);
+    }
+
+    function downloadBlob(blob, name) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+  </script>
+</body>
+</html>
