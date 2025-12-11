@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Gyro Slit-Scan</title>
+  <title>Video Slit-Scan AR</title>
   
   <style>
     /* =========================================
@@ -50,11 +50,11 @@
       height: 32px;
       pointer-events: auto;
     }
-    .dot { width: 6px; height: 6px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
+    .dot { width: 8px; height: 8px; background: #32D74B; border-radius: 50%; box-shadow: 0 0 5px #32D74B; }
     .dot.recording { background: var(--danger); animation: pulse 1s infinite; }
     .dot.gyro-active { background: var(--active); }
 
-    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.2); } 100% { opacity: 1; transform: scale(1); } }
 
     .right-ui-group {
       display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
@@ -73,10 +73,14 @@
       font-size: 13px; font-weight: 600; cursor: pointer;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       color: var(--text-main);
+      white-space: nowrap;
     }
     .fab:active { transform: scale(0.95); }
     
-    .fab.paint-btn { background: var(--active); color: #000; border-color: var(--active); }
+    /* 录制按钮样式 */
+    .fab.paint-btn { background: var(--text-main); color: #000; }
+    .fab.paint-btn.recording { background: var(--danger); color: #fff; border-color: var(--danger); }
+    
     .fab.sensor-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
     .lumetric-box {
@@ -164,7 +168,7 @@
       <div class="fab-group">
         <div class="fab" id="clearFab" title="Clear All">🗑️</div>
         <div class="fab sensor-btn" id="sensorFab">🧭 Gyro</div>
-        <div class="fab" id="paintFab">🖌️ REC</div>
+        <div class="fab paint-btn" id="paintFab">● REC</div>
       </div>
       <div class="lumetric-box">
         <canvas id="waveformCanvas" width="200" height="100"></canvas>
@@ -178,13 +182,13 @@
     </div>
 
     <div class="actions-grid">
-      <button class="btn primary" id="toggleModeBtn">View Points</button>
-      <button class="btn accent" id="exportBtn">Export Scan</button>
-      <button class="btn" id="camResetBtn">Reset Cam</button>
+      <button class="btn accent" id="exportBtn">Export 3D Model</button>
+      <button class="btn" id="camResetBtn">Reset Camera</button>
       <div class="btn file-upload">
         Import Img
         <input type="file" id="imageInput" accept="image/*">
       </div>
+      <button class="btn primary" id="toggleModeBtn">View Points</button>
     </div>
 
     <div class="slider-container">
@@ -193,7 +197,7 @@
     </div>
 
     <div class="slider-container">
-      <div class="slider-label"><span>Forward Speed (Simulated)</span><span class="slider-value" id="speedVal">15</span></div>
+      <div class="slider-label"><span>Forward Speed</span><span class="slider-value" id="speedVal">15</span></div>
       <input type="range" id="speedSlider" min="0" max="60" value="15" step="1">
     </div>
 
@@ -219,7 +223,11 @@
     let video, imgEl;
     let geometryParticles, geometryMesh, pointsObj, meshObj;
     let particlesMat, meshMat;
-    let worldGroup, cursorGroup; // 世界组 和 当前光标组
+    let worldGroup, cursorGroup;
+    
+    // 录制相关变量
+    let mediaRecorder;
+    let recordedChunks = [];
     
     let state = {
       mode: 'mesh', 
@@ -230,13 +238,12 @@
       imageLoaded: false,
       planeW: 0,
       planeH: 0,
-      isPainting: false,
+      isRecording: false, // 统一状态：既录像也绘制3D
       isGyroEnabled: false,
       scanSpeed: 15,
       lastPaintTime: 0
     };
 
-    // 传感器数据
     let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
     let initialOffset = null;
 
@@ -273,13 +280,18 @@
     animate();
 
     function init() {
-      // Scene Setup
+      // 1. Check HTTPS
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+         alert("Warning: Camera requires HTTPS.");
+      }
+
       scene = new THREE.Scene();
       scene.background = new THREE.Color(CONFIG.bgColor);
 
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 20000);
       camera.position.set(0, 0, 600);
 
+      // 关键：preserveDrawingBuffer: true 允许 Canvas 被录制
       renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -290,14 +302,12 @@
       controls.enableDamping = true;
       controls.enablePan = false;
       
-      // Groups
-      worldGroup = new THREE.Group(); // 存放画出来的东西
+      worldGroup = new THREE.Group(); 
       scene.add(worldGroup);
       
-      cursorGroup = new THREE.Group(); // 存放当前的实时预览
+      cursorGroup = new THREE.Group(); 
       scene.add(cursorGroup);
 
-      // Materials
       particlesMat = new THREE.PointsMaterial({ size: state.pointSize, vertexColors: true });
       meshMat = new THREE.MeshPhongMaterial({ 
         vertexColors: true, side: THREE.DoubleSide, 
@@ -325,11 +335,9 @@
       });
     }
 
-    // 初始化网格对象
     function resizeGrid(w, h) {
       if(w < 2 || h < 2) return; 
 
-      // 清理 cursorGroup 中的旧对象
       while(cursorGroup.children.length > 0){ 
         const c = cursorGroup.children[0];
         cursorGroup.remove(c);
@@ -365,23 +373,18 @@
       geometryMesh.setAttribute('color', new THREE.BufferAttribute(new Float32Array(meshCount * 3), 3));
       meshObj = new THREE.Mesh(geometryMesh, meshMat);
 
-      // 将当前模式的对象加入到 CursorGroup (跟随手机转动)
       updateVisibility();
     }
 
     function updateVisibility() {
-      // 简单粗暴：移除所有，重新添加当前模式
       cursorGroup.remove(pointsObj);
       cursorGroup.remove(meshObj);
-      
       if (state.mode === 'points') cursorGroup.add(pointsObj);
       else cursorGroup.add(meshObj);
     }
 
-    // --- Gyroscope Logic ---
     function enableSensor() {
       if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        // iOS 13+ 需要权限
         DeviceOrientationEvent.requestPermission()
           .then(response => {
             if (response === 'granted') {
@@ -393,7 +396,6 @@
           })
           .catch(console.error);
       } else {
-        // Android / Old iOS
         window.addEventListener('deviceorientation', handleOrientation);
         activateSensorUI();
       }
@@ -403,30 +405,24 @@
       state.isGyroEnabled = true;
       els.sensorFab.classList.add('active');
       els.statusDot.classList.add('gyro-active');
-      showToast("Sensor Active: Turn your phone!");
-      initialOffset = null; // 重置初始角度
+      showToast("Gyro Active");
+      initialOffset = null; 
     }
 
     function handleOrientation(event) {
       if (!state.isGyroEnabled) return;
-      
-      // 简单的角度平滑处理
-      const alpha = event.alpha ? THREE.MathUtils.degToRad(event.alpha) : 0; // Z轴旋转 (指南针)
-      const beta = event.beta ? THREE.MathUtils.degToRad(event.beta) : 0;   // X轴旋转 (俯仰)
-      const gamma = event.gamma ? THREE.MathUtils.degToRad(event.gamma) : 0; // Y轴旋转 (横滚)
+      const alpha = event.alpha ? THREE.MathUtils.degToRad(event.alpha) : 0;
+      const beta = event.beta ? THREE.MathUtils.degToRad(event.beta) : 0;
+      const gamma = event.gamma ? THREE.MathUtils.degToRad(event.gamma) : 0;
 
-      // 如果是第一次，记录初始偏移量，让画面保持在正前方
       if (!initialOffset) {
         initialOffset = { alpha, beta, gamma };
       }
 
-      // 应用旋转到 CursorGroup
-      // 注意：欧拉角顺序对手机来说很重要，通常 ZXY 或 YXZ
       const euler = new THREE.Euler(beta - initialOffset.beta, alpha - initialOffset.alpha, -gamma + initialOffset.gamma, 'YXZ');
       cursorGroup.setRotationFromEuler(euler);
     }
 
-    // --- Camera & Video ---
     async function startCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
       if (video.srcObject) video.srcObject.getTracks().forEach(track => track.stop());
@@ -456,30 +452,23 @@
       if (!state.imageLoaded) return;
       const aspect = imgEl.naturalWidth / imgEl.naturalHeight;
       const h = CONFIG.baseH * state.resScale;
-      const w = aspect >= 1 ? Math.round(h * aspect) : h; // Keep it simpler
+      const w = aspect >= 1 ? Math.round(h * aspect) : h; 
       resizeGrid(aspect >= 1 ? w : Math.round(h * aspect), h); 
     }
 
-    // --- Animation Loop ---
     function animate() {
       requestAnimationFrame(animate);
-      
       if(updateTexture()) {
-        processGeometry(); // 更新 Cursor
-        
-        // 核心：Slit Scan 逻辑
-        if (state.isPainting) {
+        processGeometry();
+        if (state.isRecording) {
           paintFrame();
         }
-        
         if (renderer.info.render.frame % 3 === 0) drawLumetric();
       }
-      
       controls.update();
       renderer.render(scene, camera);
     }
 
-    // 将视频纹理绘制到 Canvas 并获取数据
     function updateTexture() {
       if (state.source === 'camera') {
         if (!video || video.readyState < 2 || video.videoWidth === 0) return false;
@@ -495,7 +484,6 @@
       return true;
     }
 
-    // 更新实时预览的几何体 (Cursor)
     function processGeometry() {
       const imgData = offCtx.getImageData(0, 0, state.planeW, state.planeH).data;
       const activeGeo = state.mode === 'points' ? geometryParticles : geometryMesh;
@@ -511,7 +499,6 @@
         const r = imgData[ptr], g = imgData[ptr+1], b = imgData[ptr+2];
         const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
         
-        // Cursor 始终在原点附近显示，Z轴由亮度决定
         posAttr.array[i*3+2] = lum * extr;
         colAttr.array[i*3] = r/255; 
         colAttr.array[i*3+1] = g/255; 
@@ -526,13 +513,11 @@
       }
     }
 
-    // --- 核心：空间绘制 (The Magic) ---
     function paintFrame() {
       const now = Date.now();
-      if (now - state.lastPaintTime < 40) return; // 限制帧率以防崩溃
+      if (now - state.lastPaintTime < 40) return; 
       state.lastPaintTime = now;
 
-      // 1. 克隆当前 Cursor 的几何体
       let newObj;
       const srcObj = state.mode === 'points' ? pointsObj : meshObj;
       
@@ -542,46 +527,116 @@
         newObj = new THREE.Mesh(srcObj.geometry.clone(), meshMat.clone());
       }
 
-      // 2. 将 Cursor 当前的旋转应用到新对象上
-      // 这一步让新生成的网格“记住”了它生成时的角度
       newObj.rotation.copy(cursorGroup.rotation);
       newObj.position.copy(cursorGroup.position);
-
-      // 3. 将新对象加入到 WorldGroup (静态世界)
       worldGroup.add(newObj);
 
-      // 4. 模拟行走：将 WorldGroup 中的所有物体向后推移
-      // 或者更简单：将新物体稍微放后面一点？不，整个世界后退效果最好
-      // 为了性能，我们移动整个 worldGroup 的子对象比较慢，
-      // 更高效的方法是移动 newObj 自身。
-      
-      // 策略：
-      // 每一帧，我们把新产生的对象放在 (0,0,0)。
-      // 但是之前产生的对象需要根据 "Scan Speed" 沿着它们自己的局部 Z 轴或者世界 Z 轴移动。
-      
-      // 实现“时间隧道”效果：
-      // 我们把 worldGroup 里的所有孩子，沿着它们各自的法线方向，或者统一向后移动。
-      // 最简单的模拟行走：把 worldGroup 里的所有东西往 Z 轴深处推。
-      
-      // *** 关键算法 ***
-      // 为了让转弯后的轨迹接上，我们需要让整个 worldGroup 向着“当前光标的后方”移动。
-      // 这有点复杂，简单的近似是：让所有已经画好的东西，沿着 Z 轴后退。
-      
       const speed = state.scanSpeed;
-      
-      // 移动已有轨迹
       worldGroup.children.forEach(child => {
-        // 简单方案：直接向世界 Z 轴深处移动 (类似传送带)
-        // 这在转弯时会产生一种奇异的艺术效果 (Slit-scan aesthetic)
         child.position.z -= speed;
       });
 
-      // 5. 内存管理：移除太远的对象
       if (worldGroup.children.length > 80) {
         const old = worldGroup.children.shift();
-        old.geometry.dispose();
+        if(old.geometry) old.geometry.dispose();
         worldGroup.remove(old);
       }
+    }
+
+    // --- Video Recording ---
+    function startRecording() {
+        recordedChunks = [];
+        try {
+            // Use canvas capture stream
+            const stream = renderer.domElement.captureStream(30); // 30 FPS
+            
+            // Prefer MP4, fallback to WebM
+            let options = { mimeType: 'video/webm; codecs=vp9' };
+            if (MediaRecorder.isTypeSupported('video/mp4')) {
+                options = { mimeType: 'video/mp4' };
+            } else if (MediaRecorder.isTypeSupported('video/webm')) {
+                options = { mimeType: 'video/webm' };
+            }
+
+            mediaRecorder = new MediaRecorder(stream, options);
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) recordedChunks.push(event.data);
+            };
+            mediaRecorder.onstop = saveVideo;
+            mediaRecorder.start();
+            showToast("Recording Started");
+        } catch (e) {
+            console.error(e);
+            showToast("Video Recording Failed");
+        }
+    }
+
+    function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            showToast("Saving Video...");
+        }
+    }
+
+    function saveVideo() {
+        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const ext = mediaRecorder.mimeType.includes('mp4') ? 'mp4' : 'webm';
+        a.download = `scan_capture_${Date.now()}.${ext}`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    }
+
+    // --- 3D Export ---
+    function perform3DExport() {
+      showToast("Generating 3D Model...");
+      setTimeout(() => {
+        try {
+          const timestamp = Date.now();
+          const allMeshes = [...worldGroup.children];
+          if(state.mode === 'points') allMeshes.push(pointsObj);
+          else allMeshes.push(meshObj);
+
+          let geometries = [];
+          allMeshes.forEach(obj => {
+            const g = obj.geometry.clone();
+            obj.updateMatrixWorld();
+            g.applyMatrix4(obj.matrixWorld);
+            // Ensure colors
+            if(!g.attributes.color) {
+               const count = g.attributes.position.count;
+               g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count*3).fill(1), 3));
+            }
+            geometries.push(g);
+          });
+
+          if(geometries.length === 0) return;
+          const merged = THREE.BufferGeometryUtils.mergeBufferGeometries(geometries);
+
+          if(state.mode === 'points') {
+             const exporter = new THREE.PLYExporter();
+             const p = new THREE.Points(merged, particlesMat);
+             exporter.parse(p, res => downloadBlob(new Blob([res]), `scan_model_${timestamp}.ply`), { binary: true });
+          } else {
+             const exporter = new THREE.PLYExporter();
+             const m = new THREE.Mesh(merged, meshMat);
+             exporter.parse(m, res => downloadBlob(new Blob([res]), `scan_model_${timestamp}.ply`), { binary: true });
+          }
+          
+          merged.dispose();
+          geometries.forEach(g => g.dispose());
+
+        } catch(e) { console.error(e); showToast("Export Error (Too Large?)"); }
+      }, 100);
+    }
+
+    function downloadBlob(blob, name) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
     }
 
     // --- UI Actions ---
@@ -590,27 +645,30 @@
       els.sheetToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
       renderer.domElement.addEventListener('click', () => els.sheet.classList.add('collapsed'));
 
-      // 传感器开关
       els.sensorFab.addEventListener('click', () => {
         if (!state.isGyroEnabled) enableSensor();
-        else {
-          // 可以在这里做关闭逻辑，或者重置校准
-          showToast("Sensor Recalibrated");
-          initialOffset = null; 
-        }
+        else { showToast("Recalibrated"); initialOffset = null; }
       });
 
-      // 绘制开关
+      // Unified Recording Button
       els.paintFab.addEventListener('click', () => {
-        state.isPainting = !state.isPainting;
-        if(state.isPainting) {
-          els.paintFab.classList.add('paint-btn');
-          els.paintFab.innerText = "🛑 Stop";
+        state.isRecording = !state.isRecording;
+        if(state.isRecording) {
+          // Start 3D Paint + Video Record
+          state.isPainting = true;
+          startRecording();
+          
+          els.paintFab.classList.add('paint-btn', 'recording');
+          els.paintFab.innerText = "🛑 STOP";
           els.statusDot.className = "dot recording";
-          els.sourceText.innerText = "Scanning...";
+          els.sourceText.innerText = "Recording...";
         } else {
-          els.paintFab.classList.remove('paint-btn');
-          els.paintFab.innerText = "🖌️ REC";
+          // Stop 3D Paint + Video Record
+          state.isPainting = false;
+          stopRecording(); // This triggers video download
+          
+          els.paintFab.classList.remove('paint-btn', 'recording');
+          els.paintFab.innerText = "● REC";
           els.statusDot.className = state.isGyroEnabled ? "dot gyro-active" : "dot";
           els.sourceText.innerText = "Ready";
         }
@@ -621,7 +679,7 @@
           const c = worldGroup.children[0];
           worldGroup.remove(c); c.geometry.dispose();
         }
-        showToast("Scene Cleared");
+        showToast("Cleared");
       });
 
       els.camResetBtn.addEventListener('click', startCamera);
@@ -635,67 +693,20 @@
       els.sliders.ext.addEventListener('input', (e) => { state.extrusion = e.target.value; els.vals.ext.innerText = e.target.value; });
       els.sliders.speed.addEventListener('input', (e) => { state.scanSpeed = e.target.value; els.vals.speed.innerText = e.target.value; });
       els.sliders.size.addEventListener('input', (e) => { state.pointSize = e.target.value; particlesMat.size = e.target.value; els.vals.size.innerText = parseFloat(e.target.value).toFixed(1); });
-      els.exportBtn.addEventListener('click', performExport);
+      
+      // Export Button now only handles 3D model
+      els.exportBtn.addEventListener('click', perform3DExport);
     }
 
     function updateStatus(text) { els.sourceText.innerText = text; }
     function showToast(msg) { els.toast.innerText = msg; els.toast.style.opacity = 1; setTimeout(() => els.toast.style.opacity = 0, 3000); }
-
-    function performExport() {
-      showToast("Merging & Saving...");
-      setTimeout(() => {
-        try {
-          const timestamp = Date.now();
-          offCanvas.toBlob(b => downloadBlob(b, `scan_${timestamp}.jpg`), 'image/jpeg', 0.95);
-
-          const allMeshes = [...worldGroup.children];
-          if(state.mode === 'points') allMeshes.push(pointsObj);
-          else allMeshes.push(meshObj);
-
-          let geometries = [];
-          allMeshes.forEach(obj => {
-            const g = obj.geometry.clone();
-            obj.updateMatrixWorld();
-            g.applyMatrix4(obj.matrixWorld);
-            if(!g.attributes.color) {
-               const count = g.attributes.position.count;
-               g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count*3).fill(1), 3));
-            }
-            geometries.push(g);
-          });
-
-          if(geometries.length === 0) return;
-          const merged = THREE.BufferGeometryUtils.mergeBufferGeometries(geometries);
-
-          if(state.mode === 'points') {
-             // Export logic for points (simplified for brevity)
-             // Use same logic as previous version
-             const exporter = new THREE.PLYExporter();
-             // Hack: convert buffergeo to points to export
-             const p = new THREE.Points(merged, particlesMat);
-             exporter.parse(p, res => downloadBlob(new Blob([res]), `scan_${timestamp}.ply`), { binary: true });
-          } else {
-             const exporter = new THREE.PLYExporter();
-             const m = new THREE.Mesh(merged, meshMat);
-             exporter.parse(m, res => downloadBlob(new Blob([res]), `scan_${timestamp}.ply`), { binary: true });
-          }
-        } catch(e) { console.error(e); showToast("Export Error"); }
-      }, 100);
-    }
-
-    function downloadBlob(blob, name) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = name;
-      a.click();
-    }
 
     function drawLumetric() {
       const ctx = els.waveform;
       const w = ctx.canvas.width, h = ctx.canvas.height;
       ctx.fillStyle = 'rgba(0,0,0,1)'; ctx.fillRect(0,0,w,h);
       const data = offCtx.getImageData(0,0,state.planeW,state.planeH).data;
-      ctx.fillStyle = state.isPainting ? '#FFD60A' : '#0A84FF';
+      ctx.fillStyle = state.isRecording ? '#FF453A' : (state.isGyroEnabled ? '#FFD60A' : '#0A84FF');
       for(let x=0; x<w; x++) {
         const srcX = Math.floor(x*(state.planeW/w));
         for(let y=0; y<state.planeH; y+=20) {
